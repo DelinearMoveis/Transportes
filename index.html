@@ -1981,8 +1981,10 @@ async function pushToSheet(){
     // Envia clientes
     await apiPost({action:'syncClientes',clientes:clients});
     // Envia itinerário expandindo pedidos[]
+    // Envia na ordem manual definida pelo usuário
     const rows=[];
-    stops.forEach(s=>{
+    const _stopsOrdered=[...stops].sort((a,b)=>(a.posicao||0)-(b.posicao||0));
+    _stopsOrdered.forEach(s=>{
       const peds=s.pedidos&&s.pedidos.length?s.pedidos:[{order:s.order,nf:s.nf,lote:s.lote||'',volumes:s.volumes||''}];
       peds.forEach(p=>rows.push({pedido:p.order,nf:p.nf||'',lote:p.lote||'',volumes:p.volumes||'',clienteId:String(s.clientId),clienteNome:s.clienteNome,endereco:s.address,regiao:s.regiao||'',horario:s.hora||'',obs:s.obs||'',status:s.done?'Concluído':'Pendente'}));
     });
@@ -2031,7 +2033,16 @@ async function pullFromSheet(){
       const totalVol=g.pedidos.reduce((a,p)=>a+(parseInt(p.volumes)||0),0);
       return{...g,order:g.pedidos.map(p=>p.order).join(' | '),nf:g.pedidos.map(p=>p.nf).filter(Boolean).join(' | '),lote:g.pedidos.map(p=>p.lote).filter(Boolean).join(' | '),volumes:totalVol||''};
     });
-    saveLocal();setSyncBadge('Importado ✓','ok');render();showToast('Dados importados do Sheets!');
+    // Se Sheets está vazio, limpa local também
+    if(!stops.length){
+      stops=[];
+      saveLocal();
+      setSyncBadge('Sheets ✓','ok');
+      render();
+      showToast('Itinerário vazio no Sheets — tela limpa!');
+    } else {
+      saveLocal();setSyncBadge('Importado ✓','ok');render();showToast('Dados importados do Sheets!');
+    }
   }catch(e){setSyncBadge('Erro','err');showToast('Erro ao importar: '+e.message);}
 }
 
@@ -2173,10 +2184,11 @@ function imprimirFolha(){
   if(_psInput) _psInput.value=_dataImpressao;
   document.getElementById('ps-rodizio').textContent=driverData.rodizio?'RODÍZIO: '+driverData.rodizio:'RODÍZIO: ________________________';
   const tbody=document.getElementById('ps-tbody');
-  const total=Math.max(stops.length,10);
+  const _orderedStops=stopsOfDay(); // respeita ordem manual
+  const total=Math.max(_orderedStops.length,10);
   let html='';
   for(let i=0;i<total;i++){
-    const s=stops[i]||null;
+    const s=_orderedStops[i]||null;
     const bg=i%2!==0?'background:#f5f5f5':'';
     const peds=s?(s.pedidos&&s.pedidos.length?s.pedidos:[{order:s.order,nf:s.nf}]):[];
     const pedsHtml=peds.map(p=>`<span style="display:inline-block;margin:1px 2px;padding:1px 5px;border-radius:4px;background:#f0e6ff;color:#4a2880;font-size:10px;font-weight:600">${p.order}${p.nf?' / NF:'+p.nf:''}</span>`).join('');
@@ -2601,7 +2613,7 @@ async function salvarHistorico(){
     if(s.done===true||s.doneType==='concluido') return 'Concluído';
     return 'Pendente';
   };
-  const regs=stops.map(s=>({data:today(),pedido:s.order,nf:s.nf||'',cliente:s.clienteNome||'',endereco:s.address||'',status:getStatus(s),obs:s.obs||''}));
+  const regs=stopsOfDay().map(s=>({data:today(),pedido:s.order,nf:s.nf||'',cliente:s.clienteNome||'',endereco:s.address||'',status:getStatus(s),obs:s.obs||''}));
   hist.push(...regs);saveLocal();renderHist();
   if(scriptUrl){try{await apiPost({action:'salvarHistorico',registros:regs});showToast(`${regs.length} entrega(s) salva(s) no Sheets!`)}catch(e){showToast('Salvo localmente')}}
   else showToast(`${regs.length} entrega(s) salva(s)!`);
@@ -2970,7 +2982,7 @@ function verificarAlertas(){
     });
 
     // Entregas pendentes (sem previsão de horário)
-    stops.forEach(s=>{
+    stopsOfDay().forEach(s=>{
       if(!s.done&&!s.hora){
         alertas.push({tipo:'warn',msg:'Parada sem horário: '+s.clienteNome,acao:'switchTab(0)'});
       }
@@ -3448,6 +3460,11 @@ async function autoRefreshTick(){
       badge.style.display='inline';
     }
     if(mudou) showToast('Status atualizado!');
+    // Se Sheets zerou o itinerário, limpa local também
+    const sheetsRows=(ri.itinerario||[]).filter(r=>r[0]);
+    if(!sheetsRows.length&&stops.length){
+      stops=[];saveLocal();render();
+    }
   }catch(e){console.warn('Auto-refresh:',e);}
 }
 
